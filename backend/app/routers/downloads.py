@@ -2,6 +2,7 @@
 from typing import List
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -125,6 +126,22 @@ async def trigger_episode_download(
         db.commit()
         
     return {"message": "Download started", "download_id": download.id}
+
+
+class QueueRequest(BaseModel):
+    episode_ids: list[int]
+
+
+@router.post("/queue")
+async def enqueue_download_queue(payload: QueueRequest):
+    """Enqueue a list of episode IDs to be processed sequentially by Celery.
+    Returns task id for tracking.
+    """
+    from app.tasks.download_monitor import process_download_queue
+    if not payload.episode_ids:
+        raise HTTPException(status_code=400, detail="episode_ids is required")
+    task = process_download_queue.delay(payload.episode_ids)
+    return {"task_id": task.id, "queued": len(payload.episode_ids)}
 
 
 @router.post("/{download_id}/retry")

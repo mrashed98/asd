@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getEpisodes, triggerEpisodeDownload } from "@/lib/api";
+import { getEpisodes, triggerEpisodeDownload, enqueueEpisodeDownloads } from "@/lib/api";
 import { Download, ArrowLeft } from "lucide-react";
 
 export default function EpisodesPage() {
@@ -22,6 +22,16 @@ export default function EpisodesPage() {
 
   const downloadMutation = useMutation({
     mutationFn: triggerEpisodeDownload,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["episodes", seriesId] });
+      queryClient.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+
+  const bulkDownloadMutation = useMutation({
+    mutationFn: async (episodeIds: number[]) => {
+      return enqueueEpisodeDownloads(episodeIds);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["episodes", seriesId] });
       queryClient.invalidateQueries({ queryKey: ["downloads"] });
@@ -48,10 +58,26 @@ export default function EpisodesPage() {
       </div>
 
       <div>
-        <h1 className="text-3xl font-bold">Episodes</h1>
-        <p className="text-muted-foreground">
-          Manage and download episodes
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Episodes</h1>
+            <p className="text-muted-foreground">Manage and download episodes</p>
+          </div>
+          <div>
+            <Button
+              onClick={() => {
+                const toDownload = (episodes || []).filter((e) => !e.downloaded).map((e) => e.id);
+                if (toDownload.length) {
+                  bulkDownloadMutation.mutate(toDownload);
+                }
+              }}
+              disabled={bulkDownloadMutation.isPending || !episodes || episodes.every((e) => e.downloaded)}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Download all
+            </Button>
+          </div>
+        </div>
       </div>
 
       {isLoading && <div className="text-center py-8">Loading episodes...</div>}

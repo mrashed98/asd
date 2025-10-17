@@ -23,9 +23,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - JDOWNLOADER_HOST=
       - JDOWNLOADER_PORT=
-      - MYJD_EMAIL=
-      - MYJD_PASSWORD=
-      - MYJD_DEVICE_NAME=
+      - MYJD_EMAIL=mahmoud.rashed2505@gmail.com
+      - MYJD_PASSWORD=01cd01e1
+      - MYJD_DEVICE_NAME=CASA
       - DOWNLOAD_FOLDER=/downloads
       - ENGLISH_SERIES_DIR=/media/english-series
       - ARABIC_SERIES_DIR=/media/arabic-series
@@ -76,9 +76,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - JDOWNLOADER_HOST=
       - JDOWNLOADER_PORT=
-      - MYJD_EMAIL=
-      - MYJD_PASSWORD=
-      - MYJD_DEVICE_NAME=
+      - MYJD_EMAIL=mahmoud.rashed2505@gmail.com
+      - MYJD_PASSWORD=01cd01e1
+      - MYJD_DEVICE_NAME=CASA
       - DOWNLOAD_FOLDER=/downloads
       - ENGLISH_SERIES_DIR=/media/english-series
       - ARABIC_SERIES_DIR=/media/arabic-series
@@ -86,11 +86,11 @@ services:
       - ARABIC_MOVIES_DIR=/media/arabic-movies
     volumes:
       - ./data:/app/data
-      - ${DOWNLOAD_FOLDER:-./downloads}:/downloads
-      - ${ENGLISH_SERIES_DIR:-./media/english-series}:/media/english-series
-      - ${ARABIC_SERIES_DIR:-./media/arabic-series}:/media/arabic-series
-      - ${ENGLISH_MOVIES_DIR:-./media/english-movies}:/media/english-movies
-      - ${ARABIC_MOVIES_DIR:-./media/arabic-movies}:/media/arabic-movies
+      - /mnt/Data/Downloads:/downloads
+      - /mnt/Data/Media/TV/English:/media/english-series
+      - /mnt/Data/Media/TV/Arabic:/media/arabic-series
+      - /mnt/Data/Media/Movies/English:/media/english-movies
+      - /mnt/Data/Media/Movies/Arabic:/media/arabic-movies
     depends_on:
       redis:
         condition: service_healthy
@@ -108,8 +108,8 @@ services:
     environment:
       - DATABASE_URL=sqlite:///./data/arabseed.db
       - REDIS_URL=redis://redis:6379/0
-      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
-      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
+      - CHECK_INTERVAL_HOURS=1
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=5
     volumes:
       - ./data:/app/data  # Only needs database access
     depends_on:

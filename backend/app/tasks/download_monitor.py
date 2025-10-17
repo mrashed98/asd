@@ -6,6 +6,8 @@ from datetime import datetime
 from app.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import Download, Episode, TrackedItem, DownloadStatus
+from app.scraper.arabseed import ArabSeedScraper
+from app.config import settings
 from app.services.jdownloader import JDownloaderClient
 from app.services.file_organizer import FileOrganizer
 
@@ -125,6 +127,79 @@ def sync_downloads():
         
         return {"synced": len(downloads), "completed": completed_count}
         
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.download_monitor.process_download_queue")
+def process_download_queue(episode_ids: list[int]):
+    """Process a queue of episode IDs sequentially, creating downloads and sending to JDownloader.
+    Continues on individual failures.
+    """
+    db = SessionLocal()
+    created = 0
+    try:
+        for episode_id in episode_ids:
+            try:
+                episode = db.query(Episode).filter(Episode.id == episode_id).first()
+                if not episode:
+                    continue
+                # Skip if already downloaded
+                if episode.downloaded:
+                    continue
+                # Skip if already pending/in-progress
+                existing = db.query(Download).filter(
+                    Download.episode_id == episode_id,
+                    Download.status.in_([DownloadStatus.PENDING, DownloadStatus.IN_PROGRESS])
+                ).first()
+                if existing:
+                    continue
+
+                tracked_item = db.query(TrackedItem).filter(TrackedItem.id == episode.tracked_item_id).first()
+                if not tracked_item:
+                    continue
+
+                # Extract URL
+                download_url = None
+                try:
+                    # Use scraper in a small async loop
+                    async def _extract(url: str):
+                        async with ArabSeedScraper() as scraper:
+                            return await scraper.get_download_url(url)
+                    download_url = asyncio.run(_extract(episode.arabseed_url))
+                except Exception:
+                    download_url = None
+                if not download_url:
+                    continue
+
+                download = Download(
+                    tracked_item_id=episode.tracked_item_id,
+                    episode_id=episode_id,
+                    download_url=download_url,
+                    destination_path=settings.download_folder,
+                    status=DownloadStatus.PENDING,
+                )
+                db.add(download)
+                db.commit()
+                db.refresh(download)
+
+                # Send to JDownloader
+                jd_client = JDownloaderClient()
+                package_name = f"{tracked_item.title} - S{episode.season:02d}E{episode.episode_number:02d}"
+                package_id = asyncio.run(jd_client.add_links([
+                    download_url
+                ], settings.download_folder, package_name))
+
+                if package_id:
+                    download.jdownloader_package_id = str(package_id)
+                    download.status = DownloadStatus.IN_PROGRESS
+                    db.commit()
+                    created += 1
+            except Exception:
+                # Continue with next episode on any failure
+                db.rollback()
+                continue
+        return {"queued": len(episode_ids), "started": created}
     finally:
         db.close()
 
