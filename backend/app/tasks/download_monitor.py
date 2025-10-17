@@ -60,7 +60,7 @@ def sync_downloads():
                                     file_path = main_file["path"]
                                     
                                     # Additional video file validation
-                                        organizer = FileOrganizer()
+                                    organizer = FileOrganizer()
                                     video_validation = organizer.validate_video_file(file_path)
                                     
                                     if video_validation.get("valid", False):
