@@ -16,6 +16,10 @@ from app.config import settings
 router = APIRouter(prefix="/api/downloads", tags=["downloads"])
 
 
+# Define queue endpoint BEFORE parameterized routes to avoid path conflicts
+ 
+
+
 @router.get("", response_model=List[DownloadResponse])
 async def list_downloads(
     status: DownloadStatus = None,
