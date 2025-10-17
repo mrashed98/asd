@@ -42,7 +42,8 @@ class JDownloaderClient:
         if self._api and self._device and self._device_info and not force_reconnect:
             try:
                 # Test the connection by making a simple API call
-                self._device.update()
+                # Try to query packages to verify connection is still active
+                self._device.downloads.query_packages()
                 print("[JD] Existing My.JDownloader connection is alive")
                 return True
             except Exception as e:
@@ -86,8 +87,9 @@ class JDownloaderClient:
             print(f"[JD] Attempting to get device by name: {device_name}")
             self._device = api.get_device(device_name)
 
-            # Verify connection by updating device state
-            self._device.update()
+            # Verify connection by making a test query
+            # This will raise an exception if the connection is not working
+            self._device.downloads.query_packages()
 
             print(f"[JD] Successfully connected to device: {self._device_info.get('name')} ({self._device_info.get('id')})")
             return True
