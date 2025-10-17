@@ -441,54 +441,320 @@ class ArabSeedScraper:
 
     def _extract_series_name_from_url(self, url: str) -> str:
         """Extract series name from ArabSeed URL.
-        
+
         Args:
             url: ArabSeed series or episode URL
-            
+
         Returns:
             Extracted series name for searching
         """
         import urllib.parse
         import re
-        
+
         # Decode URL if it's encoded
         try:
             decoded_url = urllib.parse.unquote(url)
         except:
             decoded_url = url
-        
+
         # Extract series name from URL patterns
         # Pattern 1: /مسلسل-series-name-الموسم-...
         series_match = re.search(r'/مسلسل-([^-]+(?:-[^-]+)*?)-الموسم', decoded_url)
         if series_match:
             series_name = series_match.group(1).replace('-', ' ')
             return series_name
-        
+
         # Pattern 2: /series-name-الموسم-... (but not domain parts)
         series_match = re.search(r'/([^/.-]+(?:-[^/.-]+)*?)-الموسم', decoded_url)
         if series_match:
             series_name = series_match.group(1).replace('-', ' ')
             return series_name
-        
+
         # Pattern 3: /مسلسل-series-name/
         series_match = re.search(r'/مسلسل-([^/]+)', decoded_url)
         if series_match:
             series_name = series_match.group(1).replace('-', ' ')
             return series_name
-        
-        # Fallback: extract from path segments
+
+        # Pattern 4: /برنامج-series-name/ (for programs like Shark Tank)
+        series_match = re.search(r'/برنامج-([^/]+)', decoded_url)
+        if series_match:
+            series_name = series_match.group(1).replace('-', ' ')
+            return series_name
+
+        # Fallback: extract from path segments (skip category names)
+        # Common category names to skip
+        skip_categories = {'selary', 'movies', 'افلام', 'مسلسلات', 'برامج', 'programs'}
+
         path_parts = decoded_url.split('/')
         for part in path_parts:
-            if (part and not part.startswith('http') and 
+            if (part and not part.startswith('http') and
                 'الموسم' not in part and 'الحلقة' not in part and
-                '.' not in part and ':' not in part):
+                '.' not in part and ':' not in part and
+                part.lower() not in skip_categories):
                 # Clean up the part
                 clean_part = part.replace('-', ' ').strip()
-                if clean_part and len(clean_part) > 2:
+                # Skip very short parts and category-like parts
+                if clean_part and len(clean_part) > 3:
                     return clean_part
-        
-        # Ultimate fallback
-        return "series"
+
+        # Ultimate fallback - this should rarely happen now
+        return "unknown"
+
+    async def get_episodes_optimized(
+        self,
+        series_url: str,
+        series_title: str,
+        seasons: Optional[List[int]] = None
+    ) -> List[Dict[str, Any]]:
+        """Get episodes using pre-fetched metadata (optimized for tracked items).
+
+        This method skips the initial search and season extraction since we already
+        have that information from when the user tracked the series.
+
+        Args:
+            series_url: URL of the series
+            series_title: Actual series title (already extracted)
+            seasons: List of season numbers to fetch (if None, will extract from page)
+
+        Returns:
+            List of episode dictionaries with season, episode, title, and url
+        """
+        # Check cache first
+        cache_key = f"episodes:{md5(series_url.encode()).hexdigest()}"
+        cached_episodes = cache.get(cache_key)
+        if cached_episodes is not None:
+            print(f"📦 [Cache HIT] Returning cached episodes for: {series_url[:80]}")
+            return cached_episodes
+
+        print(f"🔍 [Cache MISS] Fetching episodes for: {series_title}")
+        print(f"   Using pre-fetched metadata: title='{series_title}', seasons={seasons}")
+
+        if not self.context:
+            await self.start()
+
+        page = await self.context.new_page()
+
+        try:
+            import urllib.parse
+
+            # If we don't have seasons info, we need to extract it
+            if seasons is None:
+                print(f"   ⚠️ No seasons metadata, extracting from series page...")
+                await page.goto(series_url, wait_until="domcontentloaded", timeout=30000)
+
+                # Handle ad overlays
+                try:
+                    await page.click('body', timeout=5000)
+                    await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                # Extract seasons
+                seasons_data = await page.evaluate('''() => {
+                    const seasons = [];
+                    const seasonWordToNum = {
+                      'الأول': 1, 'الاول': 1,
+                      'الثاني': 2,
+                      'الثالث': 3,
+                      'الرابع': 4,
+                      'الخامس': 5,
+                      'السادس': 6,
+                      'السابع': 7,
+                      'الثامن': 8,
+                      'التاسع': 9,
+                      'العاشر': 10,
+                    };
+
+                    const textToNumber = (txt) => {
+                      if (!txt) return null;
+                      txt = txt.trim();
+                      for (const [w,n] of Object.entries(seasonWordToNum)) {
+                        if (txt.includes(w)) return n;
+                      }
+                      const seasonMatch = txt.match(/الموسم\\s+(\\d+)/i);
+                      if (seasonMatch) {
+                        const num = parseInt(seasonMatch[1], 10);
+                        if (num >= 1 && num <= 20) return n;
+                      }
+                      return null;
+                    };
+
+                    const seasonsList = document.querySelector('#seasons__list, .list__sub__cats');
+                    if (seasonsList) {
+                      seasonsList.querySelectorAll('li').forEach(li => {
+                        const span = li.querySelector('span');
+                        if (span) {
+                          const text = span.textContent.trim();
+                          if (/الموسم/.test(text)) {
+                            const num = textToNumber(text);
+                            if (num && !seasons.some(s => s.number === num)) {
+                              seasons.push({ number: num, text: text });
+                            }
+                          }
+                        }
+                      });
+                    }
+                    return seasons.sort((a,b) => a.number - b.number);
+                }''')
+                seasons_list = [s['number'] for s in seasons_data] if seasons_data else [1]
+            else:
+                seasons_list = seasons
+                print(f"   ✅ Using tracked seasons: {seasons_list}")
+
+            # Map season numbers to Arabic text
+            season_num_to_arabic = {
+                1: 'الموسم الاول',
+                2: 'الموسم الثاني',
+                3: 'الموسم الثالث',
+                4: 'الموسم الرابع',
+                5: 'الموسم الخامس',
+                6: 'الموسم السادس',
+                7: 'الموسم السابع',
+                8: 'الموسم الثامن',
+                9: 'الموسم التاسع',
+                10: 'الموسم العاشر',
+            }
+
+            all_episodes = []
+
+            # Process each season
+            for season_num in seasons_list:
+                season_text = season_num_to_arabic.get(season_num, f'الموسم {season_num}')
+                print(f"\n   📺 Processing Season {season_num}: {season_text}")
+
+                # Create season-specific search query using the ACTUAL series title
+                season_query = f"{series_title} {season_text}"
+                encoded_query = urllib.parse.quote(season_query)
+                season_search_url = f"https://a.asd.homes/find/?word={encoded_query}&type="
+
+                print(f"      Season search URL: {season_search_url}")
+
+                # Navigate to season-specific search
+                await page.goto(season_search_url, wait_until="domcontentloaded", timeout=30000)
+
+                # Handle ad overlays
+                try:
+                    await page.click('body', timeout=5000)
+                    await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                # Find first episode (verify title contains series name)
+                print(f"      🔍 Finding first episode for Season {season_num}...")
+
+                first_episode_url = await page.evaluate(f'''() => {{
+                    const resultItems = document.querySelectorAll('.item, .search-item, [class*="item"], .box, [class*="box"]');
+
+                    for (let item of resultItems) {{
+                        const link = item.querySelector('a');
+                        if (!link || !link.href) continue;
+
+                        const href = link.href;
+                        const title = (link.textContent || '').trim();
+
+                        // Check if this is an episode (contains الحلقة)
+                        if (title.includes('الحلقة') || href.includes('الحلقة')) {{
+                            // Verify it matches our series
+                            const seriesTitle = '{series_title}'.toLowerCase();
+                            const matchesTitle = title.toLowerCase().includes(seriesTitle) ||
+                                               href.toLowerCase().includes(seriesTitle.replace(/\\s+/g, '-'));
+
+                            if (matchesTitle) {{
+                                return href;
+                            }}
+                        }}
+                    }}
+                    return null;
+                }}''')
+
+                if not first_episode_url:
+                    print(f"      ❌ No episode found for Season {season_num}")
+                    continue
+
+                print(f"      ✅ First episode URL: {first_episode_url[:80]}...")
+
+                # Open the first episode and extract ALL episodes from the list
+                print(f"      🔍 Opening first episode and extracting episode list...")
+
+                await page.goto(first_episode_url, wait_until="domcontentloaded", timeout=30000)
+
+                # Handle ad overlays
+                try:
+                    await page.click('body', timeout=5000)
+                    await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                # Extract all episodes from the episodes list
+                episodes = await page.evaluate('''() => {
+                    const episodes = [];
+                    const episodesList = document.querySelector('.episodes__list.boxs__wrapper.d__flex.flex__wrap');
+
+                    if (!episodesList) {
+                        console.log('No episodes list found');
+                        return episodes;
+                    }
+
+                    const episodeItems = episodesList.querySelectorAll('li');
+                    console.log(`Found ${episodeItems.length} episode items`);
+
+                    episodeItems.forEach((item, index) => {
+                        const link = item.querySelector('a');
+                        if (!link) return;
+
+                        const href = link.href;
+                        const text = (link.textContent || '').trim();
+
+                        // Extract episode number
+                        let episodeNumber = null;
+                        const episodeMatch = text.match(/الحلقة\\s*(\\d+)/i) || href.match(/الحلقة-(\\d+)/);
+                        if (episodeMatch) {
+                            episodeNumber = parseInt(episodeMatch[1]);
+                        }
+
+                        if (episodeNumber && href) {
+                            episodes.push({
+                                episode_number: episodeNumber,
+                                title: `الحلقة ${episodeNumber}`,
+                                url: href
+                            });
+                        }
+                    });
+
+                    console.log(`Valid episodes found: ${episodes.length}`);
+                    return episodes;
+                }''')
+
+                print(f"      ✅ Found {len(episodes)} episodes for Season {season_num}")
+
+                # Add season number to episodes
+                for episode in episodes:
+                    episode['season'] = season_num
+                    all_episodes.append(episode)
+
+            print(f"\n📊 Final Summary:")
+            print(f"   - Total episodes found: {len(all_episodes)}")
+
+            episodes_by_season = {}
+            for episode in all_episodes:
+                season = episode['season']
+                if season not in episodes_by_season:
+                    episodes_by_season[season] = []
+                episodes_by_season[season].append(episode)
+
+            for season_num in sorted(episodes_by_season.keys()):
+                season_episodes = episodes_by_season[season_num]
+                print(f"   - Season {season_num}: {len(season_episodes)} episodes")
+
+            # Cache the result for 6 hours (21600 seconds)
+            cache.set(cache_key, all_episodes, ttl=21600)
+            print(f"💾 Cached {len(all_episodes)} episodes - TTL: 21600s")
+
+            return all_episodes
+
+        finally:
+            await page.close()
 
     async def get_episodes(self, series_url: str) -> List[Dict[str, Any]]:
         """Get all episodes for a series using the corrected approach.

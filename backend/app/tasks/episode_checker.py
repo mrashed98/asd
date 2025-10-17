@@ -30,8 +30,8 @@ def check_new_episodes():
                 item.last_check = datetime.utcnow()
                 item.next_check = datetime.utcnow() + timedelta(hours=settings.check_interval_hours)
                 
-                # Get episodes from ArabSeed
-                episodes_data = asyncio.run(_fetch_episodes(item.arabseed_url))
+                # Get episodes from ArabSeed (pass full item with metadata)
+                episodes_data = asyncio.run(_fetch_episodes(item))
                 
                 # Check for new episodes
                 new_count = 0
@@ -84,10 +84,20 @@ def check_new_episodes():
     return {"checked": len(series)}
 
 
-async def _fetch_episodes(series_url: str):
-    """Fetch episodes from ArabSeed."""
+async def _fetch_episodes(tracked_item: TrackedItem):
+    """Fetch episodes from ArabSeed using tracked item metadata."""
     async with ArabSeedScraper() as scraper:
-        return await scraper.get_episodes(series_url)
+        # Extract seasons from extra_metadata if available
+        seasons = None
+        if tracked_item.extra_metadata and 'seasons' in tracked_item.extra_metadata:
+            seasons = tracked_item.extra_metadata['seasons']
+
+        # Use optimized method with cached metadata
+        return await scraper.get_episodes_optimized(
+            series_url=tracked_item.arabseed_url,
+            series_title=tracked_item.title,
+            seasons=seasons
+        )
 
 
 async def _download_episode(db, tracked_item: TrackedItem, episode: Episode):
