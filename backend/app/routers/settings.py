@@ -158,11 +158,13 @@ async def list_tracked_directories():
         except Exception as e:
             return {"path": dir_path, "exists": False, "items": [], "error": str(e)}
 
-    return {
+    payload = {
         "download_folder": list_dir(config.download_folder),
         "english_series_dir": list_dir(config.english_series_dir),
         "arabic_series_dir": list_dir(config.arabic_series_dir),
         "english_movies_dir": list_dir(config.english_movies_dir),
         "arabic_movies_dir": list_dir(config.arabic_movies_dir),
     }
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=payload)
 
