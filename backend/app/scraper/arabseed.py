@@ -589,16 +589,52 @@ class ArabSeedScraper:
             print(f"\n🔍 Step 2: Opening the series item...")
             series_url = search_results[0]['url']
             print(f"   Series URL: {series_url}")
-            
+
             await page.goto(series_url, wait_until="domcontentloaded", timeout=30000)
-            
+
             # Handle ad overlays
             try:
                 await page.click('body', timeout=5000)
                 await page.wait_for_timeout(1000)
             except Exception:
                 pass
-            
+
+            # Step 2.5: Extract the ACTUAL series title from the page (not from URL)
+            print(f"\n🔍 Step 2.5: Extracting actual series title from page...")
+            actual_series_title = await page.evaluate('''() => {
+                // Try multiple selectors to find the series title
+                const titleSelectors = [
+                    'h1.entry-title',
+                    'h1.title',
+                    '.entry-title',
+                    'h1',
+                    '.post-title',
+                    '.series-title'
+                ];
+
+                for (const selector of titleSelectors) {
+                    const element = document.querySelector(selector);
+                    if (element) {
+                        let title = (element.textContent || '').trim();
+                        // Remove "مشاهدة" or "تحميل" prefixes if present
+                        title = title.replace(/^(مشاهدة|تحميل|مسلسل)\s+/g, '');
+                        // Remove trailing quality/info text in parentheses or brackets
+                        title = title.replace(/\s*[\(\[].*?[\)\]]\s*$/g, '');
+                        if (title.length > 0) {
+                            return title;
+                        }
+                    }
+                }
+                return null;
+            }''')
+
+            # Use the actual title if found, otherwise fall back to extracted name
+            if actual_series_title:
+                series_name = actual_series_title
+                print(f"   ✅ Actual series title: '{series_name}'")
+            else:
+                print(f"   ⚠️ Could not extract title from page, using URL-based name: '{series_name}'")
+
             # Step 3: Extract available seasons
             print(f"\n🔍 Step 3: Extracting available seasons...")
             seasons = await page.evaluate('''() => {
