@@ -174,7 +174,7 @@ class JDownloaderClient:
                     "autostart": True,
                     "links": "\n".join(urls),
                     "packageName": pkg_name,
-                    "destinationFolder": destination,
+                    "destinationFolder": f"/output/{pkg_name}",
                     "overwritePackagizerRules": False
                 }])
 
