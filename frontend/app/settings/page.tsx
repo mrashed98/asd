@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { getSetting, updateSetting, testJDownloader } from "@/lib/api";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Badge } from "../../components/ui/badge";
+import { getSetting, updateSetting, testJDownloader, listTrackedDirectories } from "../../lib/api";
 import { Save, TestTube } from "lucide-react";
 
 export default function SettingsPage() {
@@ -86,6 +86,12 @@ export default function SettingsPage() {
 
   const testMutation = useMutation({
     mutationFn: testJDownloader,
+  });
+
+  const { data: directories, isLoading: isLoadingDirs, refetch: refetchDirs } = useQuery({
+    queryKey: ["settings", "directories"],
+    queryFn: listTrackedDirectories,
+    refetchOnWindowFocus: false,
   });
 
   return (
@@ -188,6 +194,64 @@ export default function SettingsPage() {
               placeholder="/media/arabic-movies"
             />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Tracked Directories</CardTitle>
+          <CardDescription>
+            Listing of files and folders in each configured directory
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {isLoadingDirs && <div className="text-sm text-muted-foreground">Loading directories...</div>}
+          {directories && (
+            <div className="space-y-6">
+              {([
+                ["download_folder", "Download Folder"],
+                ["english_series_dir", "English Series"],
+                ["arabic_series_dir", "Arabic Series"],
+                ["english_movies_dir", "English Movies"],
+                ["arabic_movies_dir", "Arabic Movies"],
+              ] as const).map(([key, label]) => {
+                const dir = (directories as any)[key];
+                return (
+                  <div key={key}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <h3 className="text-lg font-semibold">{label}</h3>
+                        <p className="text-xs text-muted-foreground">{dir?.path}</p>
+                      </div>
+                      <Badge variant={dir?.exists ? "default" : "destructive"}>
+                        {dir?.exists ? "Exists" : "Missing"}
+                      </Badge>
+                    </div>
+                    <div className="max-h-48 overflow-auto border rounded-md p-2 bg-muted/30">
+                      {!dir?.items?.length && (
+                        <div className="text-sm text-muted-foreground">No items found</div>
+                      )}
+                      {dir?.items?.map((item: any) => (
+                        <div key={item.path} className="flex items-center justify-between text-sm py-1">
+                          <div className="truncate">
+                            {item.is_dir ? "📁" : "📄"} {item.name}
+                          </div>
+                          {!item.is_dir && (
+                            <span className="text-xs text-muted-foreground">{(item.size / (1024*1024)).toFixed(1)} MB</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => refetchDirs()}>
+                  Refresh Listings
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

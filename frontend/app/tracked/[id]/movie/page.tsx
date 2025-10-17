@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useParams } from "next/navigation";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getTrackedItem, getMovieDownloadUrl, getMovieQualities, ContentType, Language } from "@/lib/api";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../../components/ui/card";
+import { Button } from "../../../../components/ui/button";
+import { Badge } from "../../../../components/ui/badge";
+import { Input } from "../../../../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../../components/ui/select";
+import { getTrackedItem, getMovieDownloadUrl, getMovieQualities, ContentType, Language } from "../../../../lib/api";
 import { ArrowLeft, Download, Link as LinkIcon, CheckCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
 
 export default function MovieDetailsPage() {

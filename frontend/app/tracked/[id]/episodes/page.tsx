@@ -2,11 +2,11 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getEpisodes, triggerEpisodeDownload, enqueueEpisodeDownloads } from "@/lib/api";
+import { Button } from "../../../../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
+import { Badge } from "../../../../components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../../components/ui/table";
+import { getEpisodes, triggerEpisodeDownload, enqueueEpisodeDownloads, getDownloadsForItem, triggerDownloadSync, validateDownloadFiles, DownloadStatus } from "../../../../lib/api";
 import { Download, ArrowLeft } from "lucide-react";
 
 export default function EpisodesPage() {
@@ -18,6 +18,12 @@ export default function EpisodesPage() {
   const { data: episodes, isLoading } = useQuery({
     queryKey: ["episodes", seriesId],
     queryFn: () => getEpisodes(seriesId),
+  });
+
+  const { data: downloads } = useQuery({
+    queryKey: ["downloads", seriesId],
+    queryFn: () => getDownloadsForItem(seriesId),
+    refetchInterval: 5000,
   });
 
   const downloadMutation = useMutation({
@@ -35,6 +41,22 @@ export default function EpisodesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["episodes", seriesId] });
       queryClient.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: triggerDownloadSync,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["downloads", seriesId] });
+      queryClient.invalidateQueries({ queryKey: ["episodes", seriesId] });
+    },
+  });
+
+  const validateMutation = useMutation({
+    mutationFn: (downloadId: number) => validateDownloadFiles(downloadId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["downloads", seriesId] });
+      queryClient.invalidateQueries({ queryKey: ["episodes", seriesId] });
     },
   });
 
@@ -133,6 +155,52 @@ export default function EpisodesPage() {
               </CardContent>
             </Card>
           ))}
+
+      {/* Active Downloads for this series */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Active Downloads</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex justify-end mb-3">
+            <Button variant="outline" size="sm" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
+              {syncMutation.isPending ? "Syncing..." : "Sync and Organize Now"}
+            </Button>
+          </div>
+          {!downloads || downloads.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No downloads for this series.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Info</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Progress</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {downloads.map((d) => (
+                  <TableRow key={d.id}>
+                    <TableCell>{d.episode_info || "Movie"}</TableCell>
+                    <TableCell>
+                      <Badge variant={d.status === DownloadStatus.COMPLETED ? "default" : d.status === DownloadStatus.FAILED ? "destructive" : "secondary"}>
+                        {d.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{Math.round(d.progress || 0)}%</TableCell>
+                    <TableCell>
+                      <Button size="sm" variant="outline" onClick={() => validateMutation.mutate(d.id)} disabled={validateMutation.isPending}>
+                        Validate files
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {episodes && episodes.length === 0 && (
         <div className="text-center py-8 text-muted-foreground">

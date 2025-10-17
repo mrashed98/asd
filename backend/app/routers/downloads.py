@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/downloads", tags=["downloads"])
 @router.get("", response_model=List[DownloadResponse])
 async def list_downloads(
     status: DownloadStatus = None,
+    tracked_item_id: int | None = None,
     db: Session = Depends(get_db)
 ):
     """List all downloads.
@@ -35,6 +36,9 @@ async def list_downloads(
     if status:
         query = query.filter(Download.status == status)
         
+    if tracked_item_id:
+        query = query.filter(Download.tracked_item_id == tracked_item_id)
+    
     downloads = query.order_by(Download.created_at.desc()).all()
     
     # Enrich with content info
