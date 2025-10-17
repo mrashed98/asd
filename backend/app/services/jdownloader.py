@@ -123,16 +123,7 @@ class JDownloaderClient:
             Package ID if successful, None otherwise
         """
         try:
-            if await self._ensure_login():
-                # myjdapi: add links to linkgrabber using the correct API format
-                query = {
-                    "autostart": True,
-                    "links": "\n".join(urls),
-                    "packageName": package_name or "ArabSeed Download",
-                }
-                print(f"[JD] add_links via My.JD: device={self._device_info.get('name')}, pkg={query['packageName']}, urls={len(urls)}")
-                self._device.linkgrabber.add_links([query])
-                return "myjdapi"
+            # Prefer local API to obtain a concrete package ID that we can track later
             payload = {
                 "autostart": True,
                 "links": "\n".join(urls),

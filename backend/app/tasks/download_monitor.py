@@ -39,7 +39,7 @@ def sync_downloads():
                     package_id = download.jdownloader_package_id
                     
                     # Get detailed package status
-                    package_status = asyncio.run(jd_client.get_package_status(package_id))
+                    package_status = asyncio.run(jd_client.get_package_status(int(package_id)))
                     
                     if package_status:
                         # Update progress and status
@@ -60,7 +60,7 @@ def sync_downloads():
                                     file_path = main_file["path"]
                                     
                                     # Additional video file validation
-                                    organizer = FileOrganizer()
+                                        organizer = FileOrganizer()
                                     video_validation = organizer.validate_video_file(file_path)
                                     
                                     if video_validation.get("valid", False):
