@@ -28,6 +28,46 @@ async def get_all_settings(db: Session = Depends(get_db)):
     return settings
 
 
+@router.get("/directories")
+async def list_tracked_directories():
+    """List contents of configured tracked and download directories (one level deep).
+    Returns names and basic metadata to render in Settings page.
+    """
+    def list_dir(dir_path: str):
+        try:
+            p = Path(dir_path)
+            if not p.exists() or not p.is_dir():
+                return {"path": dir_path, "exists": p.exists(), "items": []}
+            entries = []
+            for child in p.iterdir():
+                try:
+                    stat = child.stat()
+                    entries.append({
+                        "name": child.name,
+                        "path": str(child),
+                        "is_dir": child.is_dir(),
+                        "size": 0 if child.is_dir() else stat.st_size,
+                        "modified": stat.st_mtime,
+                    })
+                except Exception:
+                    continue
+            # Sort: directories first, then files by name
+            entries.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+            return {"path": dir_path, "exists": True, "items": entries}
+        except Exception as e:
+            return {"path": dir_path, "exists": False, "items": [], "error": str(e)}
+
+    payload = {
+        "download_folder": list_dir(config.download_folder),
+        "english_series_dir": list_dir(config.english_series_dir),
+        "arabic_series_dir": list_dir(config.arabic_series_dir),
+        "english_movies_dir": list_dir(config.english_movies_dir),
+        "arabic_movies_dir": list_dir(config.arabic_movies_dir),
+    }
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=payload)
+
+
 @router.get("/{key}", response_model=SettingResponse)
 async def get_setting(key: str, db: Session = Depends(get_db)):
     """Get specific setting.
