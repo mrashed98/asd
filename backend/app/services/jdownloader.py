@@ -123,34 +123,28 @@ class JDownloaderClient:
             Package ID if successful, None otherwise
         """
         try:
-            # Prefer local API to obtain a concrete package ID that we can track later
-            payload = {
-                "autostart": True,
-                "links": "\n".join(urls),
-                "packageName": package_name or "ArabSeed Download",
-                "destinationFolder": destination,
-                "overwritePackagizerRules": False,
-                "priority": "DEFAULT",
-                "downloadPassword": None,
-                "extractPassword": None
-            }
-            
-            print(f"[JD] add_links via local API: url={self.base_url}, pkg={payload['packageName']}, dest={destination}, urls={len(urls)}")
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/linkgrabberv2/addLinks",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
+            # Force using My.JDownloader API
+            if await self._ensure_login():
+                print(f"[JD] add_links via My.JDownloader: pkg={package_name or 'ArabSeed Download'}, dest={destination}, urls={len(urls)}")
+                
+                # Use My.JDownloader API to add links
+                for url in urls:
+                    self._device.linkgrabber.add_links([url], package_name=package_name or "ArabSeed Download", destination_folder=destination)
+                
+                # Get the package ID from linkgrabber
+                packages = self._device.linkgrabber.query_packages()
+                for pkg in packages:
+                    if pkg.name == (package_name or "ArabSeed Download"):
                         # Move to downloads
-                        if data.get("id"):
-                            await self._move_to_downloads(data["id"])
-                        return data.get("id")
-                    return None
+                        self._device.linkgrabber.move_to_downloadlist([pkg.uuid])
+                        return str(pkg.uuid)
+                
+                return None
+            else:
+                print("[JD] My.JDownloader not available, cannot add links")
+                return None
         except Exception as e:
-            print(f"[JD] Error adding links: {e}")
+            print(f"[JD] Error adding links via My.JDownloader: {e}")
             traceback.print_exc()
             return None
             
@@ -184,32 +178,33 @@ class JDownloaderClient:
             List of link information
         """
         try:
-            payload = {
-                "bytesLoaded": True,
-                "bytesTotal": True,
-                "enabled": True,
-                "eta": True,
-                "finished": True,
-                "packageUUIDs": [],
-                "speed": True,
-                "status": True,
-                "url": True
-            }
-            
-            if link_ids:
-                payload["linkIds"] = link_ids
+            if await self._ensure_login():
+                # Use My.JDownloader API
+                links = self._device.downloads.query_links()
+                if link_ids:
+                    # Filter by specific link IDs if provided
+                    links = [link for link in links if link.uuid in link_ids]
                 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/downloadsV2/queryLinks",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    return []
+                # Convert to dictionary format
+                result = []
+                for link in links:
+                    result.append({
+                        "uuid": link.uuid,
+                        "name": link.name,
+                        "url": link.url,
+                        "bytesLoaded": link.bytes_loaded,
+                        "bytesTotal": link.bytes_total,
+                        "enabled": link.enabled,
+                        "finished": link.finished,
+                        "status": link.status,
+                        "speed": link.speed,
+                        "eta": link.eta,
+                        "packageUUID": link.package_uuid
+                    })
+                return result
+            return []
         except Exception as e:
-            print(f"Error querying links: {e}")
+            print(f"Error querying links via My.JDownloader: {e}")
             return []
             
     async def query_packages(self, package_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
@@ -222,33 +217,34 @@ class JDownloaderClient:
             List of package information
         """
         try:
-            payload = {
-                "bytesLoaded": True,
-                "bytesTotal": True,
-                "childCount": True,
-                "enabled": True,
-                "eta": True,
-                "finished": True,
-                "hosts": True,
-                "saveTo": True,
-                "speed": True,
-                "status": True
-            }
-            
-            if package_ids:
-                payload["packageUUIDs"] = package_ids
+            if await self._ensure_login():
+                # Use My.JDownloader API
+                packages = self._device.downloads.query_packages()
+                if package_ids:
+                    # Filter by specific package IDs if provided
+                    packages = [pkg for pkg in packages if pkg.uuid in package_ids]
                 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/downloadsV2/queryPackages",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    return []
+                # Convert to dictionary format
+                result = []
+                for pkg in packages:
+                    result.append({
+                        "uuid": pkg.uuid,
+                        "name": pkg.name,
+                        "bytesLoaded": pkg.bytes_loaded,
+                        "bytesTotal": pkg.bytes_total,
+                        "childCount": pkg.child_count,
+                        "enabled": pkg.enabled,
+                        "finished": pkg.finished,
+                        "status": pkg.status,
+                        "speed": pkg.speed,
+                        "eta": pkg.eta,
+                        "saveTo": pkg.save_to,
+                        "hosts": pkg.hosts
+                    })
+                return result
+            return []
         except Exception as e:
-            print(f"Error querying packages: {e}")
+            print(f"Error querying packages via My.JDownloader: {e}")
             return []
             
     async def get_download_progress(self, link_id: int) -> Optional[float]:
