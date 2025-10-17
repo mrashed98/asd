@@ -1,0 +1,119 @@
+"use client";
+
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useParams, useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { getEpisodes, triggerEpisodeDownload } from "@/lib/api";
+import { Download, ArrowLeft } from "lucide-react";
+
+export default function EpisodesPage() {
+  const params = useParams();
+  const router = useRouter();
+  const seriesId = parseInt(params.id as string);
+  const queryClient = useQueryClient();
+
+  const { data: episodes, isLoading } = useQuery({
+    queryKey: ["episodes", seriesId],
+    queryFn: () => getEpisodes(seriesId),
+  });
+
+  const downloadMutation = useMutation({
+    mutationFn: triggerEpisodeDownload,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["episodes", seriesId] });
+      queryClient.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+
+  // Group episodes by season
+  const episodesBySeason = episodes?.reduce((acc, episode) => {
+    const season = episode.season;
+    if (!acc[season]) {
+      acc[season] = [];
+    }
+    acc[season].push(episode);
+    return acc;
+  }, {} as Record<number, typeof episodes>);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <Button variant="ghost" onClick={() => router.back()}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back to Tracked Items
+        </Button>
+      </div>
+
+      <div>
+        <h1 className="text-3xl font-bold">Episodes</h1>
+        <p className="text-muted-foreground">
+          Manage and download episodes
+        </p>
+      </div>
+
+      {isLoading && <div className="text-center py-8">Loading episodes...</div>}
+
+      {episodesBySeason &&
+        Object.entries(episodesBySeason)
+          .sort(([a], [b]) => parseInt(a) - parseInt(b))
+          .map(([season, seasonEpisodes]) => (
+            <Card key={season}>
+              <CardHeader>
+                <CardTitle>Season {season}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Episode</TableHead>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {seasonEpisodes
+                      .sort((a, b) => a.episode_number - b.episode_number)
+                      .map((episode) => (
+                        <TableRow key={episode.id}>
+                          <TableCell>E{episode.episode_number.toString().padStart(2, "0")}</TableCell>
+                          <TableCell>{episode.title || "-"}</TableCell>
+                          <TableCell>
+                            {episode.downloaded ? (
+                              <Badge variant="default">Downloaded</Badge>
+                            ) : (
+                              <Badge variant="secondary">Not Downloaded</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {!episode.downloaded && (
+                              <Button
+                                size="sm"
+                                onClick={() => downloadMutation.mutate(episode.id)}
+                                disabled={downloadMutation.isPending}
+                              >
+                                <Download className="mr-2 h-4 w-4" />
+                                Download
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          ))}
+
+      {episodes && episodes.length === 0 && (
+        <div className="text-center py-8 text-muted-foreground">
+          No episodes found for this series
+        </div>
+      )}
+    </div>
+  );
+}
+
