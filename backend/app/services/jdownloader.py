@@ -135,8 +135,8 @@ class JDownloaderClient:
                     "destinationFolder": destination,
                     "overwritePackagizerRules": False,
                 }
-                # Wrap in 'query' per AddLinksQueryStorable docs
-                self._device.linkgrabber.add_links({"query": query})
+                # Pass query directly to add_links method
+                self._device.linkgrabber.add_links(query)
 
                 # Try to find the created package UUID
                 packages = self._device.linkgrabber.query_packages()
