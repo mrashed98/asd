@@ -3,11 +3,13 @@ import re
 import asyncio
 from typing import List, Optional, Dict, Any
 from urllib.parse import urlparse, urljoin
+from hashlib import md5
 
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 
 from app.models import ContentType
 from app.schemas import SearchResult
+from app.cache import cache
 
 
 # Ad domains to block/close
@@ -302,7 +304,18 @@ class ArabSeedScraper:
         4. Extract seasons from dropdown options
 
         Returns a list of { number: int, url: str | None } sorted by number.
+
+        Results are cached for 1 hour per URL.
         """
+        # Check cache first
+        cache_key = f"seasons:{md5(url.encode()).hexdigest()}"
+        cached_seasons = cache.get(cache_key)
+        if cached_seasons is not None:
+            print(f"📦 [Cache HIT] Returning cached seasons for: {url[:80]}")
+            return cached_seasons
+
+        print(f"🔍 [Cache MISS] Fetching seasons for: {url[:80]}")
+
         if not self.context:
             await self.start()
 
@@ -418,6 +431,10 @@ class ArabSeedScraper:
                     except Exception:
                         continue
 
+            # Cache the result for 1 hour (3600 seconds)
+            cache.set(cache_key, normalized, ttl=3600)
+            print(f"💾 Cached seasons for: {url[:80]} - TTL: 3600s")
+
             return normalized
         finally:
             await page.close()
@@ -475,7 +492,7 @@ class ArabSeedScraper:
 
     async def get_episodes(self, series_url: str) -> List[Dict[str, Any]]:
         """Get all episodes for a series using the corrected approach.
-        
+
         Corrected approach based on successful browser automation:
         1. Search for the series with type filter
         2. Open the series item (parent series page)
@@ -483,17 +500,28 @@ class ArabSeedScraper:
         4. Re-search with season-specific queries for each season
         5. Open the first episode of each season
         6. Extract episode list from ul.episodes__list.boxs__wrapper.d__flex.flex__wrap structure
-        
+
         Args:
             series_url: URL of the series (used to extract series name)
-            
+
         Returns:
             List of episode dictionaries with season, episode, title, and url
+
+        Results are cached for 6 hours per series URL.
         """
+        # Check cache first
+        cache_key = f"episodes:{md5(series_url.encode()).hexdigest()}"
+        cached_episodes = cache.get(cache_key)
+        if cached_episodes is not None:
+            print(f"📦 [Cache HIT] Returning cached episodes for: {series_url[:80]}")
+            return cached_episodes
+
+        print(f"🔍 [Cache MISS] Fetching episodes for: {series_url[:80]}")
+
         # Ensure context is available
         if not self.context:
             await self.start()
-            
+
         page = await self.context.new_page()
         
         try:
@@ -941,9 +969,13 @@ class ArabSeedScraper:
             for season_num in sorted(episodes_by_season.keys()):
                 season_episodes = episodes_by_season[season_num]
                 print(f"   - Season {season_num}: {len(season_episodes)} episodes")
-            
+
+            # Cache the result for 6 hours (21600 seconds)
+            cache.set(cache_key, all_episodes, ttl=21600)
+            print(f"💾 Cached {len(all_episodes)} episodes for: {series_url[:80]} - TTL: 21600s")
+
             return all_episodes
-            
+
         finally:
             await page.close()
             

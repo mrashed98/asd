@@ -3,74 +3,37 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 import json
-import time
-from functools import lru_cache
 
 from app.scraper.arabseed import ArabSeedScraper
 from app.schemas import SearchResponse, SearchResult
 from app.models import ContentType, TrackedItem
 from app.database import get_db
+from app.cache import cache
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
-# Simple in-memory cache for search results
-search_cache = {}
-CACHE_TTL = 300  # 5 minutes in seconds
+# Cache TTL settings
+SEARCH_CACHE_TTL = 600  # 10 minutes for search results
+SEASONS_CACHE_TTL = 3600  # 1 hour for seasons data
 
 def get_cache_key(query: str, content_type: str = None) -> str:
     """Generate cache key for search query."""
-    return f"{query.lower().strip()}:{content_type or 'all'}"
-
-def is_cache_valid(timestamp: float) -> bool:
-    """Check if cache entry is still valid."""
-    return time.time() - timestamp < CACHE_TTL
-
-def get_cached_result(cache_key: str) -> Dict[str, Any]:
-    """Get cached search result if valid."""
-    if cache_key in search_cache:
-        cached_data = search_cache[cache_key]
-        if is_cache_valid(cached_data['timestamp']):
-            return cached_data['data']
-        else:
-            # Remove expired cache entry
-            del search_cache[cache_key]
-    return None
-
-def set_cached_result(cache_key: str, data: Dict[str, Any]):
-    """Cache search result with timestamp."""
-    search_cache[cache_key] = {
-        'data': data,
-        'timestamp': time.time()
-    }
+    return f"search:{query.lower().strip()}:{content_type or 'all'}"
 
 def invalidate_cache_for_url(arabseed_url: str):
     """Invalidate cache entries that might contain the given URL."""
+    # Invalidate all search results (since we can't easily determine which ones contain this URL)
+    # This is acceptable since search cache TTL is only 10 minutes
+    deleted = cache.delete_pattern("search:*")
+    if deleted > 0:
+        print(f"🗑️ Invalidated {deleted} search cache entries for URL update")
+
+    # Also invalidate seasons cache for this specific URL
     import urllib.parse
-    
-    # Normalize URLs for comparison
-    decoded_url = urllib.parse.unquote(arabseed_url)
-    encoded_url = urllib.parse.quote(arabseed_url, safe=':/?#[]@!$&\'()*+,;=')
-    
-    keys_to_remove = []
-    for cache_key, cached_data in search_cache.items():
-        if 'data' in cached_data and 'results' in cached_data['data']:
-            for result in cached_data['data']['results']:
-                result_url = result.get('arabseed_url', '')
-                result_decoded = urllib.parse.unquote(result_url)
-                
-                # Check if any URL variation matches
-                if (result_url == arabseed_url or 
-                    result_url == decoded_url or 
-                    result_url == encoded_url or
-                    result_decoded == decoded_url or
-                    result_decoded == arabseed_url):
-                    keys_to_remove.append(cache_key)
-                    print(f"🔍 Found matching URL in cache: {cache_key}")
-                    break
-    
-    for key in keys_to_remove:
-        del search_cache[key]
-        print(f"🗑️ Invalidated cache entry: {key}")
+    from hashlib import md5
+    url_hash = md5(arabseed_url.encode()).hexdigest()
+    cache.delete(f"seasons:{url_hash}")
+    print(f"🗑️ Invalidated seasons cache for: {arabseed_url}")
 
 
 @router.get("", response_model=SearchResponse)
@@ -87,16 +50,16 @@ async def search_content(query: str, content_type: str = None, db: Session = Dep
     """
     if not query or len(query) < 2:
         raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
-    
-    # Check cache first
+
+    # Check Redis cache first
     cache_key = get_cache_key(query, content_type)
-    cached_result = get_cached_result(cache_key)
-    
+    cached_result = cache.get(cache_key)
+
     if cached_result:
-        print(f"📦 Returning cached search results for: {query} ({content_type})")
+        print(f"📦 [Cache HIT] Returning cached search results for: {query} ({content_type})")
         return SearchResponse(**cached_result)
-    
-    print(f"🔍 Making new search request for: {query} ({content_type})")
+
+    print(f"🔍 [Cache MISS] Making new search request for: {query} ({content_type})")
         
     async with ArabSeedScraper() as scraper:
         if content_type == "series":
@@ -156,13 +119,14 @@ async def search_content(query: str, content_type: str = None, db: Session = Dep
             
             enhanced_results.append(enhanced_result)
         
-        # Cache the results
+        # Cache the results in Redis
         response_data = {
             "results": [result.dict() for result in enhanced_results],
             "query": query
         }
-        set_cached_result(cache_key, response_data)
-        
+        cache.set(cache_key, response_data, ttl=SEARCH_CACHE_TTL)
+        print(f"💾 Cached search results for: {query} ({content_type}) - TTL: {SEARCH_CACHE_TTL}s")
+
     return SearchResponse(results=enhanced_results, query=query)
 
 

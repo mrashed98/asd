@@ -37,9 +37,9 @@ def sync_downloads():
                 # Get comprehensive status from JDownloader
                 if download.jdownloader_package_id:
                     package_id = download.jdownloader_package_id
-                    
-                    # Get detailed package status
-                    package_status = asyncio.run(jd_client.get_package_status(int(package_id)))
+
+                    # Get detailed package status (package_id is UUID string, not int)
+                    package_status = asyncio.run(jd_client.get_package_status(package_id))
                     
                     if package_status:
                         # Update progress and status

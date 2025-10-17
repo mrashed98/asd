@@ -25,6 +25,29 @@ class JDownloaderClient:
         self._device_info = None
         self._enabled = Myjdapi is not None and bool(getattr(settings, 'myjd_email', None))
 
+    @staticmethod
+    def _get_attr(obj, *keys, default=None):
+        """Get attribute from object or dict, trying multiple key formats.
+
+        Args:
+            obj: Object or dict to get attribute from
+            *keys: Attribute names to try (camelCase, snake_case, etc.)
+            default: Default value if not found
+
+        Returns:
+            Attribute value or default
+        """
+        for key in keys:
+            # Try as dict first
+            if isinstance(obj, dict):
+                if key in obj:
+                    return obj[key]
+            # Try as object attribute
+            else:
+                if hasattr(obj, key):
+                    return getattr(obj, key)
+        return default
+
     async def _ensure_login(self, force_reconnect=False):
         """Ensure we have a valid My.JDownloader connection.
 
@@ -38,20 +61,11 @@ class JDownloaderClient:
             print("[JD] My.JDownloader disabled or not configured. Falling back to local API.")
             return False
 
-        # If we have a connection and not forcing reconnect, test if it's still alive
+        # If we have a connection and not forcing reconnect, assume it's still valid
+        # The connection will be tested when actually used, and retry logic will handle failures
         if self._api and self._device and self._device_info and not force_reconnect:
-            try:
-                # Test the connection by making a simple API call
-                # Try to query packages to verify connection is still active
-                self._device.downloads.query_packages()
-                print("[JD] Existing My.JDownloader connection is alive")
-                return True
-            except Exception as e:
-                print(f"[JD] Existing connection failed (will reconnect): {e}")
-                # Connection is dead, continue to reconnect below
-                self._api = None
-                self._device = None
-                self._device_info = None
+            print("[JD] Reusing existing My.JDownloader connection")
+            return True
 
         # Need to establish a new connection
         try:
@@ -87,9 +101,10 @@ class JDownloaderClient:
             print(f"[JD] Attempting to get device by name: {device_name}")
             self._device = api.get_device(device_name)
 
-            # Verify connection by making a test query
-            # This will raise an exception if the connection is not working
-            self._device.downloads.query_packages()
+            # Give the API a moment to establish the connection
+            import asyncio
+            import time
+            time.sleep(0.5)  # Small delay to let connection establish
 
             print(f"[JD] Successfully connected to device: {self._device_info.get('name')} ({self._device_info.get('id')})")
             return True
@@ -176,7 +191,7 @@ class JDownloaderClient:
                     "autostart": True,
                     "links": "\n".join(urls),
                     "packageName": pkg_name,
-                    "destinationFolder": f"/output/{pkg_name}",
+                    "destinationFolder": "/output/",
                     "overwritePackagizerRules": False
                 }])
 
@@ -260,23 +275,24 @@ class JDownloaderClient:
                 links = self._device.downloads.query_links()
                 if link_ids:
                     # Filter by specific link IDs if provided
-                    links = [link for link in links if link.uuid in link_ids]
+                    # Handle both dict and object formats
+                    links = [link for link in links if self._get_attr(link, 'uuid') in link_ids]
 
-                # Convert to dictionary format
+                # Convert to dictionary format (handle both dict and object responses)
                 result = []
                 for link in links:
                     result.append({
-                        "uuid": link.uuid,
-                        "name": link.name,
-                        "url": link.url,
-                        "bytesLoaded": link.bytes_loaded,
-                        "bytesTotal": link.bytes_total,
-                        "enabled": link.enabled,
-                        "finished": link.finished,
-                        "status": link.status,
-                        "speed": link.speed,
-                        "eta": link.eta,
-                        "packageUUID": link.package_uuid
+                        "uuid": self._get_attr(link, 'uuid'),
+                        "name": self._get_attr(link, 'name'),
+                        "url": self._get_attr(link, 'url'),
+                        "bytesLoaded": self._get_attr(link, 'bytesLoaded', 'bytes_loaded'),
+                        "bytesTotal": self._get_attr(link, 'bytesTotal', 'bytes_total'),
+                        "enabled": self._get_attr(link, 'enabled'),
+                        "finished": self._get_attr(link, 'finished'),
+                        "status": self._get_attr(link, 'status'),
+                        "speed": self._get_attr(link, 'speed'),
+                        "eta": self._get_attr(link, 'eta'),
+                        "packageUUID": self._get_attr(link, 'packageUUID', 'package_uuid')
                     })
                 return result
 
@@ -318,24 +334,25 @@ class JDownloaderClient:
                 packages = self._device.downloads.query_packages()
                 if package_ids:
                     # Filter by specific package IDs if provided
-                    packages = [pkg for pkg in packages if pkg.uuid in package_ids]
+                    # Handle both dict and object formats
+                    packages = [pkg for pkg in packages if self._get_attr(pkg, 'uuid') in package_ids]
 
-                # Convert to dictionary format
+                # Convert to dictionary format (handle both dict and object responses)
                 result = []
                 for pkg in packages:
                     result.append({
-                        "uuid": pkg.uuid,
-                        "name": pkg.name,
-                        "bytesLoaded": pkg.bytes_loaded,
-                        "bytesTotal": pkg.bytes_total,
-                        "childCount": pkg.child_count,
-                        "enabled": pkg.enabled,
-                        "finished": pkg.finished,
-                        "status": pkg.status,
-                        "speed": pkg.speed,
-                        "eta": pkg.eta,
-                        "saveTo": pkg.save_to,
-                        "hosts": pkg.hosts
+                        "uuid": self._get_attr(pkg, 'uuid'),
+                        "name": self._get_attr(pkg, 'name'),
+                        "bytesLoaded": self._get_attr(pkg, 'bytesLoaded', 'bytes_loaded'),
+                        "bytesTotal": self._get_attr(pkg, 'bytesTotal', 'bytes_total'),
+                        "childCount": self._get_attr(pkg, 'childCount', 'child_count'),
+                        "enabled": self._get_attr(pkg, 'enabled'),
+                        "finished": self._get_attr(pkg, 'finished'),
+                        "status": self._get_attr(pkg, 'status'),
+                        "speed": self._get_attr(pkg, 'speed'),
+                        "eta": self._get_attr(pkg, 'eta'),
+                        "saveTo": self._get_attr(pkg, 'saveTo', 'save_to'),
+                        "hosts": self._get_attr(pkg, 'hosts', default=[])
                     })
                 return result
 
@@ -423,33 +440,41 @@ class JDownloaderClient:
             print(f"Error getting download status: {e}")
             return None
 
-    async def get_package_status(self, package_id: int) -> Optional[Dict[str, Any]]:
+    async def get_package_status(self, package_id) -> Optional[Dict[str, Any]]:
         """Get comprehensive package status.
-        
+
         Args:
-            package_id: Package ID
-            
+            package_id: Package ID (UUID string)
+
         Returns:
             Dictionary with package status information or None
         """
         try:
             if await self._ensure_login():
-                packages = await self.query_packages([package_id])
-                if packages and len(packages) > 0:
-                    package = packages[0]
+                # Query all packages and find the matching one by UUID
+                packages = await self.query_packages()
+
+                # Find package with matching UUID
+                matching_package = None
+                for pkg in packages:
+                    if str(pkg.get("uuid")) == str(package_id):
+                        matching_package = pkg
+                        break
+
+                if matching_package:
                     return {
                         "package_id": package_id,
-                        "finished": package.get("finished", False),
-                        "enabled": package.get("enabled", True),
-                        "status": package.get("status", "Unknown"),
-                        "bytes_loaded": package.get("bytesLoaded", 0),
-                        "bytes_total": package.get("bytesTotal", 0),
-                        "progress": (package.get("bytesLoaded", 0) / package.get("bytesTotal", 1)) * 100 if package.get("bytesTotal", 0) > 0 else 0,
-                        "speed": package.get("speed", 0),
-                        "eta": package.get("eta", 0),
-                        "save_to": package.get("saveTo", ""),
-                        "hosts": package.get("hosts", []),
-                        "child_count": package.get("childCount", 0)
+                        "finished": matching_package.get("finished", False),
+                        "enabled": matching_package.get("enabled", True),
+                        "status": matching_package.get("status", "Unknown"),
+                        "bytes_loaded": matching_package.get("bytesLoaded", 0),
+                        "bytes_total": matching_package.get("bytesTotal", 0),
+                        "progress": (matching_package.get("bytesLoaded", 0) / matching_package.get("bytesTotal", 1)) * 100 if matching_package.get("bytesTotal", 0) > 0 else 0,
+                        "speed": matching_package.get("speed", 0),
+                        "eta": matching_package.get("eta", 0),
+                        "save_to": matching_package.get("saveTo", ""),
+                        "hosts": matching_package.get("hosts", []),
+                        "child_count": matching_package.get("childCount", 0)
                     }
             return None
         except Exception as e:
