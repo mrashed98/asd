@@ -204,6 +204,83 @@ def process_download_queue(episode_ids: list[int]):
         db.close()
 
 
+@celery_app.task(name="app.tasks.download_monitor.scan_existing_media_for_tracked_item")
+def scan_existing_media_for_tracked_item(tracked_item_id: int):
+    """Scan media and downloads directories for files matching a tracked item.
+    For series, mark episodes as downloaded when matching SxxExx patterns.
+    For movies, organize any matching file into the movies directory.
+    """
+    db = SessionLocal()
+    try:
+        from app.models import TrackedItem, Episode, ContentType
+        from app.config import settings
+        import re
+
+        item = db.query(TrackedItem).filter(TrackedItem.id == tracked_item_id).first()
+        if not item:
+            return {"scanned": False, "reason": "tracked item not found"}
+
+        video_exts = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v")
+        title_norm = re.sub(r"\s+", " ", FileOrganizer.sanitize_filename(item.title)).strip().lower()
+
+        organizer = FileOrganizer()
+
+        found = 0
+
+        # 1) Scan downloads recursively for matching files and organize
+        downloads_root = Path(settings.download_folder)
+        if downloads_root.exists():
+            for p in downloads_root.rglob("*"):
+                if p.is_file() and p.suffix.lower() in video_exts:
+                    name_norm = p.stem.replace("-", " ").replace("_", " ").lower()
+                    if title_norm and title_norm in name_norm:
+                        if item.type.name == "SERIES":
+                            # Try to extract SxxExx
+                            season, episode_num = organizer.parse_episode_info(p.name, "")
+                            if season and episode_num:
+                                new_path = organizer.organize_series(str(p), item.title, season, episode_num, item.language, item.arabseed_url)
+                                if new_path:
+                                    ep = db.query(Episode).filter(Episode.tracked_item_id == item.id, Episode.season == season, Episode.episode_number == episode_num).first()
+                                    if ep:
+                                        ep.file_path = new_path
+                                        ep.downloaded = True
+                                        ep.file_size = Path(new_path).stat().st_size
+                                        found += 1
+                                        db.commit()
+                        else:
+                            new_path = organizer.organize_movie(str(p), item.title, item.language)
+                            if new_path:
+                                found += 1
+
+        # 2) Scan series/movie library for already placed files
+        if item.type.name == "SERIES":
+            base = Path(settings.english_series_dir if item.language.name == "ENGLISH" else settings.arabic_series_dir)
+            candidate = base / FileOrganizer.sanitize_filename(item.title)
+            if candidate.exists():
+                for f in candidate.rglob("*"):
+                    if f.is_file() and f.suffix.lower() in video_exts:
+                        season, episode_num = organizer.parse_episode_info(f.name, item.arabseed_url)
+                        if season and episode_num:
+                            ep = db.query(Episode).filter(Episode.tracked_item_id == item.id, Episode.season == season, Episode.episode_number == episode_num).first()
+                            if ep and not ep.downloaded:
+                                ep.file_path = str(f)
+                                ep.downloaded = True
+                                ep.file_size = f.stat().st_size
+                                found += 1
+                                db.commit()
+        else:
+            base = Path(settings.english_movies_dir if item.language.name == "ENGLISH" else settings.arabic_movies_dir)
+            if base.exists():
+                for f in base.glob(f"**/{FileOrganizer.sanitize_filename(item.title)}*"):
+                    if f.is_file() and f.suffix.lower() in video_exts:
+                        found += 1
+                        break
+
+        return {"tracked_item_id": tracked_item_id, "matched_files": found}
+    finally:
+        db.close()
+
+
 @celery_app.task(name="app.tasks.download_monitor.scan_download_directory")
 def scan_download_directory():
     """Scan download directory for new files and validate existing downloads."""

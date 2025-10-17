@@ -43,6 +43,14 @@ async def get_series_seasons(series_url: str):
 tracked_router = APIRouter(prefix="/api/tracked", tags=["tracked"])
 
 
+@tracked_router.post("/{tracked_item_id}/scan-existing-media")
+async def trigger_scan_existing_media(tracked_item_id: int):
+    """Trigger background scan for existing media matching a tracked item."""
+    from app.tasks.download_monitor import scan_existing_media_for_tracked_item
+    task = scan_existing_media_for_tracked_item.delay(tracked_item_id)
+    return {"task_id": task.id, "status": "started"}
+
+
 @tracked_router.get("", response_model=List[TrackedItemResponse])
 async def list_tracked_items(
     type: Optional[ContentType] = None,

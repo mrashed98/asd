@@ -254,6 +254,12 @@ async def update_tracking_status(
                     db.add(new_item)
                     db.commit()
                     db.refresh(new_item)
+                    # Kick off background scan for existing media
+                    try:
+                        from app.tasks.download_monitor import scan_existing_media_for_tracked_item
+                        scan_existing_media_for_tracked_item.delay(new_item.id)
+                    except Exception:
+                        pass
                     
                     # Invalidate cache for this URL
                     invalidate_cache_for_url(arabseed_url)
@@ -279,6 +285,12 @@ async def update_tracking_status(
                     db.add(new_item)
                     db.commit()
                     db.refresh(new_item)
+                    # Kick off background scan for existing media
+                    try:
+                        from app.tasks.download_monitor import scan_existing_media_for_tracked_item
+                        scan_existing_media_for_tracked_item.delay(new_item.id)
+                    except Exception:
+                        pass
                     
                     # Invalidate cache for this URL
                     invalidate_cache_for_url(arabseed_url)
