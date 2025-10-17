@@ -25,13 +25,34 @@ class JDownloaderClient:
         self._device_info = None
         self._enabled = Myjdapi is not None and bool(getattr(settings, 'myjd_email', None))
 
-    async def _ensure_login(self):
+    async def _ensure_login(self, force_reconnect=False):
+        """Ensure we have a valid My.JDownloader connection.
+
+        Args:
+            force_reconnect: Force a fresh connection even if we think we're connected
+
+        Returns:
+            True if connected, False otherwise
+        """
         if not self._enabled:
             print("[JD] My.JDownloader disabled or not configured. Falling back to local API.")
             return False
-        if self._api and self._device and self._device_info:
-            return True
-        # myjdapi is sync; run in thread if needed, but quick ops are fine here
+
+        # If we have a connection and not forcing reconnect, test if it's still alive
+        if self._api and self._device and self._device_info and not force_reconnect:
+            try:
+                # Test the connection by making a simple API call
+                self._device.update()
+                print("[JD] Existing My.JDownloader connection is alive")
+                return True
+            except Exception as e:
+                print(f"[JD] Existing connection failed (will reconnect): {e}")
+                # Connection is dead, continue to reconnect below
+                self._api = None
+                self._device = None
+                self._device_info = None
+
+        # Need to establish a new connection
         try:
             print(f"[JD] Attempting My.JDownloader login: email={settings.myjd_email}, device_pref={getattr(settings,'myjd_device_name', None)}")
             pw_preview = None
@@ -42,6 +63,7 @@ class JDownloaderClient:
 
             api = Myjdapi()
             api.connect(settings.myjd_email, settings.myjd_password)
+            api.update_devices()  # Refresh device list
             devices = api.list_devices()
             print(f"[JD] Devices found: {[d.get('name') for d in devices] if devices else devices}")
             if not devices:
@@ -63,11 +85,18 @@ class JDownloaderClient:
             print(f"[JD] Device info: {chosen}")
             print(f"[JD] Attempting to get device by name: {device_name}")
             self._device = api.get_device(device_name)
-            print(f"[JD] Using device: {self._device_info.get('name')} ({self._device_info.get('id')})")
+
+            # Verify connection by updating device state
+            self._device.update()
+
+            print(f"[JD] Successfully connected to device: {self._device_info.get('name')} ({self._device_info.get('id')})")
             return True
         except Exception as e:
             print("[JD] My.JDownloader login failed:", e)
             traceback.print_exc()
+            self._api = None
+            self._device = None
+            self._device_info = None
             return False
         
     async def test_connection(self) -> Dict[str, Any]:
@@ -110,23 +139,35 @@ class JDownloaderClient:
         self,
         urls: List[str],
         destination: str,
-        package_name: Optional[str] = None
+        package_name: Optional[str] = None,
+        max_retries: int = 3
     ) -> Optional[str]:
-        """Add download links to JDownloader.
-        
+        """Add download links to JDownloader with automatic retry on connection failure.
+
         Args:
             urls: List of URLs to download
             destination: Destination directory path
             package_name: Optional package name
-            
+            max_retries: Maximum number of retry attempts (default: 3)
+
         Returns:
             Package ID if successful, None otherwise
         """
-        try:
-            # Force using My.JDownloader API
-            if await self._ensure_login():
-                pkg_name = package_name or "ArabSeed Download"
-                print(f"[JD] add_links via My.JDownloader: pkg={pkg_name}, dest={destination}, urls={len(urls)}")
+        pkg_name = package_name or "ArabSeed Download"
+
+        for attempt in range(max_retries):
+            try:
+                # Ensure we have a valid connection (force reconnect on retry)
+                force_reconnect = (attempt > 0)
+                if not await self._ensure_login(force_reconnect=force_reconnect):
+                    print(f"[JD] My.JDownloader not available (attempt {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        import asyncio
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                    return None
+
+                print(f"[JD] add_links via My.JDownloader (attempt {attempt + 1}/{max_retries}): pkg={pkg_name}, dest={destination}, urls={len(urls)}")
 
                 # Use the correct parameter format for myjdapi - expects a list with a dictionary
                 self._device.linkgrabber.add_links([{
@@ -144,16 +185,37 @@ class JDownloaderClient:
                     uuid = pkg.get("uuid") if isinstance(pkg, dict) else getattr(pkg, "uuid", None)
                     if name == pkg_name and uuid is not None:
                         # With autostart=True, JD should move to downloads automatically
+                        print(f"[JD] Successfully added links, package UUID: {uuid}")
                         return str(uuid)
 
+                print(f"[JD] Links added but package not found in linkgrabber (may have auto-started)")
                 return None
-            else:
-                print("[JD] My.JDownloader not available, cannot add links")
-                return None
-        except Exception as e:
-            print(f"[JD] Error adding links via My.JDownloader: {e}")
-            traceback.print_exc()
-            return None
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"[JD] Error adding links (attempt {attempt + 1}/{max_retries}): {error_msg}")
+
+                # Check if it's a connection error
+                if "No connection established" in error_msg or "Connection" in error_msg:
+                    print(f"[JD] Connection error detected, will retry with fresh connection")
+                    # Force reconnect on next attempt
+                    self._api = None
+                    self._device = None
+                    self._device_info = None
+
+                    if attempt < max_retries - 1:
+                        import asyncio
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                        continue
+                    else:
+                        traceback.print_exc()
+                        return None
+                else:
+                    # Non-connection error, fail immediately
+                    traceback.print_exc()
+                    return None
+
+        return None
             
     async def _move_to_downloads(self, link_ids: List[int]) -> bool:
         """Move links from linkgrabber to downloads.
@@ -175,23 +237,29 @@ class JDownloaderClient:
         except:
             return False
             
-    async def query_links(self, link_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
-        """Query download links status.
-        
+    async def query_links(self, link_ids: Optional[List[int]] = None, max_retries: int = 2) -> List[Dict[str, Any]]:
+        """Query download links status with automatic retry on connection failure.
+
         Args:
             link_ids: Optional list of specific link IDs
-            
+            max_retries: Maximum number of retry attempts (default: 2)
+
         Returns:
             List of link information
         """
-        try:
-            if await self._ensure_login():
+        for attempt in range(max_retries):
+            try:
+                # Force reconnect on retry
+                force_reconnect = (attempt > 0)
+                if not await self._ensure_login(force_reconnect=force_reconnect):
+                    return []
+
                 # Use My.JDownloader API
                 links = self._device.downloads.query_links()
                 if link_ids:
                     # Filter by specific link IDs if provided
                     links = [link for link in links if link.uuid in link_ids]
-                
+
                 # Convert to dictionary format
                 result = []
                 for link in links:
@@ -209,28 +277,47 @@ class JDownloaderClient:
                         "packageUUID": link.package_uuid
                     })
                 return result
-            return []
-        except Exception as e:
-            print(f"Error querying links via My.JDownloader: {e}")
-            return []
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"Error querying links (attempt {attempt + 1}/{max_retries}): {error_msg}")
+
+                # Retry on connection errors
+                if ("No connection established" in error_msg or "Connection" in error_msg) and attempt < max_retries - 1:
+                    self._api = None
+                    self._device = None
+                    self._device_info = None
+                    import asyncio
+                    await asyncio.sleep(1)
+                    continue
+
+                return []
+
+        return []
             
-    async def query_packages(self, package_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
-        """Query download packages status.
-        
+    async def query_packages(self, package_ids: Optional[List[int]] = None, max_retries: int = 2) -> List[Dict[str, Any]]:
+        """Query download packages status with automatic retry on connection failure.
+
         Args:
             package_ids: Optional list of specific package IDs
-            
+            max_retries: Maximum number of retry attempts (default: 2)
+
         Returns:
             List of package information
         """
-        try:
-            if await self._ensure_login():
+        for attempt in range(max_retries):
+            try:
+                # Force reconnect on retry
+                force_reconnect = (attempt > 0)
+                if not await self._ensure_login(force_reconnect=force_reconnect):
+                    return []
+
                 # Use My.JDownloader API
                 packages = self._device.downloads.query_packages()
                 if package_ids:
                     # Filter by specific package IDs if provided
                     packages = [pkg for pkg in packages if pkg.uuid in package_ids]
-                
+
                 # Convert to dictionary format
                 result = []
                 for pkg in packages:
@@ -249,10 +336,23 @@ class JDownloaderClient:
                         "hosts": pkg.hosts
                     })
                 return result
-            return []
-        except Exception as e:
-            print(f"Error querying packages via My.JDownloader: {e}")
-            return []
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"Error querying packages (attempt {attempt + 1}/{max_retries}): {error_msg}")
+
+                # Retry on connection errors
+                if ("No connection established" in error_msg or "Connection" in error_msg) and attempt < max_retries - 1:
+                    self._api = None
+                    self._device = None
+                    self._device_info = None
+                    import asyncio
+                    await asyncio.sleep(1)
+                    continue
+
+                return []
+
+        return []
             
     async def get_download_progress(self, link_id: int) -> Optional[float]:
         """Get download progress for a specific link.
