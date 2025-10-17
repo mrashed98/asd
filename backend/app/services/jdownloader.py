@@ -125,20 +125,28 @@ class JDownloaderClient:
         try:
             # Force using My.JDownloader API
             if await self._ensure_login():
-                print(f"[JD] add_links via My.JDownloader: pkg={package_name or 'ArabSeed Download'}, dest={destination}, urls={len(urls)}")
-                
-                # Use My.JDownloader API to add links
-                for url in urls:
-                    self._device.linkgrabber.add_links([url], package_name=package_name or "ArabSeed Download", destination_folder=destination)
-                
-                # Get the package ID from linkgrabber
+                pkg_name = package_name or "ArabSeed Download"
+                print(f"[JD] add_links via My.JDownloader: pkg={pkg_name}, dest={destination}, urls={len(urls)}")
+
+                params = {
+                    "autostart": True,
+                    "links": "\n".join(urls),
+                    "packageName": pkg_name,
+                    "destinationFolder": destination,
+                    "overwritePackagizerRules": False,
+                }
+                # myjdapi expects a single params dict
+                self._device.linkgrabber.add_links(params)
+
+                # Try to find the created package UUID
                 packages = self._device.linkgrabber.query_packages()
-                for pkg in packages:
-                    if pkg.name == (package_name or "ArabSeed Download"):
-                        # Move to downloads
-                        self._device.linkgrabber.move_to_downloadlist([pkg.uuid])
-                        return str(pkg.uuid)
-                
+                for pkg in packages or []:
+                    name = pkg.get("name") if isinstance(pkg, dict) else getattr(pkg, "name", None)
+                    uuid = pkg.get("uuid") if isinstance(pkg, dict) else getattr(pkg, "uuid", None)
+                    if name == pkg_name and uuid is not None:
+                        # With autostart=True, JD should move to downloads automatically
+                        return str(uuid)
+
                 return None
             else:
                 print("[JD] My.JDownloader not available, cannot add links")
