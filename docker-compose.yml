@@ -26,27 +26,27 @@ services:
     environment:
       - DATABASE_URL=sqlite:///./data/arabseed.db
       - REDIS_URL=redis://redis:6379/0
-      - JDOWNLOADER_HOST=${JDOWNLOADER_HOST:-host.docker.internal}
-      - JDOWNLOADER_PORT=${JDOWNLOADER_PORT:-3129}
+      - JDOWNLOADER_HOST=host.docker.internal
+      - JDOWNLOADER_PORT=5800
       # My.JDownloader credentials (expected by app.config.Settings -> myjd_*)
-      - MYJD_EMAIL=${MYJD_EMAIL}
-      - MYJD_PASSWORD=${MYJD_PASSWORD}
-      - MYJD_DEVICE_NAME=${MYJD_DEVICE_NAME}
+      - MYJD_EMAIL=mahmoud.rashed2505@gmail.com
+      - MYJD_PASSWORD=01cd01e1
+      - MYJD_DEVICE_NAME=CASA
       - DOWNLOAD_FOLDER=/downloads
       - ENGLISH_SERIES_DIR=/media/english-series
       - ARABIC_SERIES_DIR=/media/arabic-series
       - ENGLISH_MOVIES_DIR=/media/english-movies
       - ARABIC_MOVIES_DIR=/media/arabic-movies
-      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
-      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
-      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://localhost:3001","http://localhost"]}
+      - CHECK_INTERVAL_HOURS=1
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=5
+      - CORS_ORIGINS=["*"]
     volumes:
       - ./data:/app/data
-      - ${DOWNLOAD_FOLDER:-./downloads}:/downloads
-      - ${ENGLISH_SERIES_DIR:-./media/english-series}:/media/english-series
-      - ${ARABIC_SERIES_DIR:-./media/arabic-series}:/media/arabic-series
-      - ${ENGLISH_MOVIES_DIR:-./media/english-movies}:/media/english-movies
-      - ${ARABIC_MOVIES_DIR:-./media/arabic-movies}:/media/arabic-movies
+      - /mnt/Data/Downloads:/downloads
+      - /mnt/Data/Media/TV/English:/media/english-series
+      - /mnt/Data/Media/TV/Arabic:/media/arabic-series
+      - /mnt/Data/Media/Movies/English:/media/english-movies
+      - /mnt/Data/Media/Movies/Arabic:/media/arabic-movies
     depends_on:
       redis:
         condition: service_healthy
@@ -69,25 +69,25 @@ services:
     environment:
       - DATABASE_URL=sqlite:///./data/arabseed.db
       - REDIS_URL=redis://redis:6379/0
-      - JDOWNLOADER_HOST=${JDOWNLOADER_HOST:-host.docker.internal}
-      - JDOWNLOADER_PORT=${JDOWNLOADER_PORT:-3129}
-      - MYJD_EMAIL=${MYJD_EMAIL}
-      - MYJD_PASSWORD=${MYJD_PASSWORD}
-      - MYJD_DEVICE_NAME=${MYJD_DEVICE_NAME}
+      - JDOWNLOADER_HOST=host.docker.internal
+      - JDOWNLOADER_PORT=5800
+      - MYJD_EMAIL=mahmoud.rashed2505@gmail.com
+      - MYJD_PASSWORD=01cd01e1
+      - MYJD_DEVICE_NAME=CASA
       - DOWNLOAD_FOLDER=/downloads
       - ENGLISH_SERIES_DIR=/media/english-series
       - ARABIC_SERIES_DIR=/media/arabic-series
       - ENGLISH_MOVIES_DIR=/media/english-movies
       - ARABIC_MOVIES_DIR=/media/arabic-movies
-      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
-      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
+      - CHECK_INTERVAL_HOURS=1
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=5
     volumes:
       - ./data:/app/data
-      - ${DOWNLOAD_FOLDER:-./downloads}:/downloads
-      - ${ENGLISH_SERIES_DIR:-./media/english-series}:/media/english-series
-      - ${ARABIC_SERIES_DIR:-./media/arabic-series}:/media/arabic-series
-      - ${ENGLISH_MOVIES_DIR:-./media/english-movies}:/media/english-movies
-      - ${ARABIC_MOVIES_DIR:-./media/arabic-movies}:/media/arabic-movies
+      - /mnt/Data/Downloads:/downloads
+      - /mnt/Data/Media/TV/English:/media/english-series
+      - /mnt/Data/Media/TV/Arabic:/media/arabic-series
+      - /mnt/Data/Media/Movies/English:/media/english-movies
+      - /mnt/Data/Media/Movies/Arabic:/media/arabic-movies
     depends_on:
       redis:
         condition: service_healthy
@@ -107,8 +107,8 @@ services:
     environment:
       - DATABASE_URL=sqlite:///./data/arabseed.db
       - REDIS_URL=redis://redis:6379/0
-      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
-      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
+      - CHECK_INTERVAL_HOURS=1
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=5
     volumes:
       - ./data:/app/data
     depends_on:
@@ -125,7 +125,7 @@ services:
     ports:
       - "3001:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8001
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://192.168.68.111:8001}
     depends_on:
       backend:
         condition: service_healthy

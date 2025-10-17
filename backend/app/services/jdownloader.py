@@ -128,15 +128,15 @@ class JDownloaderClient:
                 pkg_name = package_name or "ArabSeed Download"
                 print(f"[JD] add_links via My.JDownloader: pkg={pkg_name}, dest={destination}, urls={len(urls)}")
 
-                params = {
+                query = {
                     "autostart": True,
                     "links": "\n".join(urls),
                     "packageName": pkg_name,
                     "destinationFolder": destination,
                     "overwritePackagizerRules": False,
                 }
-                # myjdapi expects a single params dict
-                self._device.linkgrabber.add_links(params)
+                # Wrap in 'query' per AddLinksQueryStorable docs
+                self._device.linkgrabber.add_links({"query": query})
 
                 # Try to find the created package UUID
                 packages = self._device.linkgrabber.query_packages()
