@@ -1,0 +1,301 @@
+"""Search endpoints."""
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+from typing import List, Dict, Any
+import json
+import time
+from functools import lru_cache
+
+from app.scraper.arabseed import ArabSeedScraper
+from app.schemas import SearchResponse, SearchResult
+from app.models import ContentType, TrackedItem
+from app.database import get_db
+
+router = APIRouter(prefix="/api/search", tags=["search"])
+
+# Simple in-memory cache for search results
+search_cache = {}
+CACHE_TTL = 300  # 5 minutes in seconds
+
+def get_cache_key(query: str, content_type: str = None) -> str:
+    """Generate cache key for search query."""
+    return f"{query.lower().strip()}:{content_type or 'all'}"
+
+def is_cache_valid(timestamp: float) -> bool:
+    """Check if cache entry is still valid."""
+    return time.time() - timestamp < CACHE_TTL
+
+def get_cached_result(cache_key: str) -> Dict[str, Any]:
+    """Get cached search result if valid."""
+    if cache_key in search_cache:
+        cached_data = search_cache[cache_key]
+        if is_cache_valid(cached_data['timestamp']):
+            return cached_data['data']
+        else:
+            # Remove expired cache entry
+            del search_cache[cache_key]
+    return None
+
+def set_cached_result(cache_key: str, data: Dict[str, Any]):
+    """Cache search result with timestamp."""
+    search_cache[cache_key] = {
+        'data': data,
+        'timestamp': time.time()
+    }
+
+def invalidate_cache_for_url(arabseed_url: str):
+    """Invalidate cache entries that might contain the given URL."""
+    import urllib.parse
+    
+    # Normalize URLs for comparison
+    decoded_url = urllib.parse.unquote(arabseed_url)
+    encoded_url = urllib.parse.quote(arabseed_url, safe=':/?#[]@!$&\'()*+,;=')
+    
+    keys_to_remove = []
+    for cache_key, cached_data in search_cache.items():
+        if 'data' in cached_data and 'results' in cached_data['data']:
+            for result in cached_data['data']['results']:
+                result_url = result.get('arabseed_url', '')
+                result_decoded = urllib.parse.unquote(result_url)
+                
+                # Check if any URL variation matches
+                if (result_url == arabseed_url or 
+                    result_url == decoded_url or 
+                    result_url == encoded_url or
+                    result_decoded == decoded_url or
+                    result_decoded == arabseed_url):
+                    keys_to_remove.append(cache_key)
+                    print(f"🔍 Found matching URL in cache: {cache_key}")
+                    break
+    
+    for key in keys_to_remove:
+        del search_cache[key]
+        print(f"🗑️ Invalidated cache entry: {key}")
+
+
+@router.get("", response_model=SearchResponse)
+async def search_content(query: str, content_type: str = None, db: Session = Depends(get_db)):
+    """Search ArabSeed for content with tracking status and seasons caching.
+    
+    Args:
+        query: Search query string
+        content_type: Filter by content type ('series' or 'movies')
+        db: Database session
+        
+    Returns:
+        Search results with tracking status and seasons data
+    """
+    if not query or len(query) < 2:
+        raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
+    
+    # Check cache first
+    cache_key = get_cache_key(query, content_type)
+    cached_result = get_cached_result(cache_key)
+    
+    if cached_result:
+        print(f"📦 Returning cached search results for: {query} ({content_type})")
+        return SearchResponse(**cached_result)
+    
+    print(f"🔍 Making new search request for: {query} ({content_type})")
+        
+    async with ArabSeedScraper() as scraper:
+        if content_type == "series":
+            # Use series-specific search URL
+            results = await scraper.search(query, content_type="series")
+        elif content_type == "movies":
+            # Use movies-specific search URL  
+            results = await scraper.search(query, content_type="movies")
+        else:
+            # Default search (no type filter)
+            results = await scraper.search(query)
+        
+        # Enhance results with tracking status and seasons data
+        enhanced_results = []
+        for result in results:
+            # Check if this item is already tracked
+            # Try both URL-encoded and non-URL-encoded versions for comparison
+            import urllib.parse
+            decoded_url = urllib.parse.unquote(result.arabseed_url)
+            encoded_url = urllib.parse.quote(result.arabseed_url, safe=':/?#[]@!$&\'()*+,;=')
+            
+            tracked_item = db.query(TrackedItem).filter(
+                (TrackedItem.arabseed_url == result.arabseed_url) |
+                (TrackedItem.arabseed_url == decoded_url) |
+                (TrackedItem.arabseed_url == encoded_url)
+            ).first()
+            
+            enhanced_result = SearchResult(
+                title=result.title,
+                type=result.type,
+                arabseed_url=result.arabseed_url,
+                poster_url=result.poster_url,
+                badge=result.badge,
+                is_tracked=tracked_item is not None,
+                tracking_id=tracked_item.id if tracked_item else None,
+                tracked_seasons=[],
+                available_seasons=[]
+            )
+            
+            # For series, get seasons data and tracking status
+            if result.type == ContentType.SERIES:
+                try:
+                    # Get available seasons
+                    seasons_data = await scraper.get_seasons(result.arabseed_url)
+                    available_seasons = [s.get('number', s) if isinstance(s, dict) else s for s in seasons_data]
+                    enhanced_result.available_seasons = available_seasons
+                    
+                    # Get tracked seasons if item is tracked
+                    if tracked_item and tracked_item.extra_metadata:
+                        tracked_seasons = tracked_item.extra_metadata.get('seasons', [])
+                        enhanced_result.tracked_seasons = tracked_seasons
+                        
+                except Exception as e:
+                    # If seasons extraction fails, continue without seasons data
+                    print(f"Failed to get seasons for {result.title}: {e}")
+                    enhanced_result.available_seasons = []
+            
+            enhanced_results.append(enhanced_result)
+        
+        # Cache the results
+        response_data = {
+            "results": [result.dict() for result in enhanced_results],
+            "query": query
+        }
+        set_cached_result(cache_key, response_data)
+        
+    return SearchResponse(results=enhanced_results, query=query)
+
+
+@router.post("/track")
+async def update_tracking_status(
+    arabseed_url: str,
+    seasons: str = None,  # Accept as string and parse
+    action: str = "track",  # "track" or "untrack"
+    title: str = None,  # Title from search results
+    db: Session = Depends(get_db)
+):
+    """Update tracking status for a series or movie.
+    
+    Args:
+        arabseed_url: URL of the content to track/untrack
+        seasons: List of seasons to track (for series only)
+        action: "track" or "untrack"
+        db: Database session
+        
+    Returns:
+        Updated tracking status
+    """
+    if action not in ["track", "untrack"]:
+        raise HTTPException(status_code=400, detail="Action must be 'track' or 'untrack'")
+    
+    # Parse seasons string to list of integers
+    seasons_list = []
+    if seasons:
+        try:
+            seasons_list = [int(s.strip()) for s in seasons.split(',') if s.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid seasons format. Use comma-separated integers.")
+    
+    # Check if item is already tracked
+    tracked_item = db.query(TrackedItem).filter(
+        TrackedItem.arabseed_url == arabseed_url
+    ).first()
+    
+    if action == "track":
+        if tracked_item:
+            # Update existing tracking with new seasons
+            if seasons_list:
+                if tracked_item.extra_metadata is None:
+                    tracked_item.extra_metadata = {}
+                tracked_item.extra_metadata['seasons'] = seasons_list
+                db.commit()
+            # Invalidate cache for this URL
+            invalidate_cache_for_url(arabseed_url)
+            
+            return {
+                "message": "Tracking updated",
+                "tracking_id": tracked_item.id,
+                "tracked_seasons": seasons_list
+            }
+        else:
+            # Create new tracking entry
+            # We need to get the correct content type from search results
+            async with ArabSeedScraper() as scraper:
+                # Search for the item to get the correct content type
+                try:
+                    # Extract a basic search query from the title or URL
+                    search_query = title or "unknown"
+                    search_results = await scraper.search(search_query)
+                    
+                    # Find the matching result by URL
+                    matching_result = None
+                    for result in search_results:
+                        if result.arabseed_url == arabseed_url:
+                            matching_result = result
+                            break
+                    
+                    # Determine content type from search result or fallback logic
+                    if matching_result:
+                        content_type = matching_result.type
+                    else:
+                        # Fallback: determine from URL structure
+                        if "/مسلسل-" in arabseed_url or "/selary/" in arabseed_url:
+                            content_type = ContentType.SERIES
+                        else:
+                            content_type = ContentType.MOVIE
+                    
+                    new_item = TrackedItem(
+                        title=title or "Unknown",  # Use provided title or fallback
+                        type=content_type,
+                        language="en",  # Default language
+                        arabseed_url=arabseed_url,
+                        extra_metadata={"seasons": seasons_list} if seasons_list else None
+                    )
+                    db.add(new_item)
+                    db.commit()
+                    db.refresh(new_item)
+                    
+                    # Invalidate cache for this URL
+                    invalidate_cache_for_url(arabseed_url)
+                    
+                    return {
+                        "message": "Tracking started",
+                        "tracking_id": new_item.id,
+                        "tracked_seasons": seasons_list
+                    }
+                    
+                except Exception as e:
+                    # Fallback if search fails
+                    print(f"Failed to determine content type from search: {e}")
+                    content_type = ContentType.SERIES if seasons_list else ContentType.MOVIE
+                    
+                    new_item = TrackedItem(
+                        title=title or "Unknown",
+                        type=content_type,
+                        language="en",
+                        arabseed_url=arabseed_url,
+                        extra_metadata={"seasons": seasons_list} if seasons_list else None
+                    )
+                    db.add(new_item)
+                    db.commit()
+                    db.refresh(new_item)
+                    
+                    # Invalidate cache for this URL
+                    invalidate_cache_for_url(arabseed_url)
+                    
+                    return {
+                        "message": "Tracking started",
+                        "tracking_id": new_item.id,
+                        "tracked_seasons": seasons_list
+                    }
+    
+    elif action == "untrack":
+        if tracked_item:
+            db.delete(tracked_item)
+            db.commit()
+            # Invalidate cache for this URL
+            invalidate_cache_for_url(arabseed_url)
+            return {"message": "Tracking stopped", "tracking_id": tracked_item.id}
+        else:
+            return {"message": "Item was not being tracked"}
+

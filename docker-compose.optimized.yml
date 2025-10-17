@@ -1,0 +1,125 @@
+services:
+  # Redis for Celery
+  frontend:
+    image: mrashed98/asd-frontend:v1.0.0-linux
+    container_name: arabseed_frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8001
+    depends_on:
+      backend:
+        condition: service_healthy
+  # Backend API
+  backend:
+    image: mrashed98/asd-backend:v1.0.0-linux
+    container_name: arabseed_backend
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./data/arabseed.db
+      - REDIS_URL=redis://redis:6379/0
+      - JDOWNLOADER_HOST=
+      - JDOWNLOADER_PORT=
+      - MYJD_EMAIL=
+      - MYJD_PASSWORD=
+      - MYJD_DEVICE_NAME=
+      - DOWNLOAD_FOLDER=/downloads
+      - ENGLISH_SERIES_DIR=/media/english-series
+      - ARABIC_SERIES_DIR=/media/arabic-series
+      - ENGLISH_MOVIES_DIR=/media/english-movies
+      - ARABIC_MOVIES_DIR=/media/arabic-movies
+      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://localhost:3001","http://localhost"]}
+    volumes:
+      - ./data:/app/data
+      - /mnt/Data/Downloads:/downloads
+      - /mnt/Data/Media/TV/English:/media/english-series
+      - /mnt/Data/Media/TV/Arabic:/media/arabic-series
+      - /mnt/Data/Media/Movies/English:/media/english-movies
+      - /mnt/Data/Media/Movies/Arabic:/media/arabic-movies
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  redis:
+    image: redis:7-alpine
+    container_name: arabseed_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Celery Worker (only needs DB + Redis + JDownloader)
+  celery_worker:
+    image: mrashed98/asd-backend:v1.0.0-linux
+    container_name: arabseed_celery_worker
+    restart: unless-stopped
+    command: celery -A app.celery_app worker --loglevel=info
+    environment:
+      - DATABASE_URL=sqlite:///./data/arabseed.db
+      - REDIS_URL=redis://redis:6379/0
+      - JDOWNLOADER_HOST=
+      - JDOWNLOADER_PORT=
+      - MYJD_EMAIL=
+      - MYJD_PASSWORD=
+      - MYJD_DEVICE_NAME=
+      - DOWNLOAD_FOLDER=/downloads
+      - ENGLISH_SERIES_DIR=/media/english-series
+      - ARABIC_SERIES_DIR=/media/arabic-series
+      - ENGLISH_MOVIES_DIR=/media/english-movies
+      - ARABIC_MOVIES_DIR=/media/arabic-movies
+    volumes:
+      - ./data:/app/data
+      - ${DOWNLOAD_FOLDER:-./downloads}:/downloads
+      - ${ENGLISH_SERIES_DIR:-./media/english-series}:/media/english-series
+      - ${ARABIC_SERIES_DIR:-./media/arabic-series}:/media/arabic-series
+      - ${ENGLISH_MOVIES_DIR:-./media/english-movies}:/media/english-movies
+      - ${ARABIC_MOVIES_DIR:-./media/arabic-movies}:/media/arabic-movies
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Celery Beat (only needs DB + Redis, no JDownloader or file paths)
+  celery_beat:
+    image: mrashed98/asd-backend:v1.0.0-linux
+    container_name: arabseed_celery_beat
+    restart: unless-stopped
+    command: celery -A app.celery_app beat --loglevel=info
+    environment:
+      - DATABASE_URL=sqlite:///./data/arabseed.db
+      - REDIS_URL=redis://redis:6379/0
+      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
+    volumes:
+      - ./data:/app/data  # Only needs database access
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  # Frontend (minimal config - only needs API URL)
+  
+
+volumes:
+  redis_data:

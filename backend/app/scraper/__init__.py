@@ -1,0 +1,2 @@
+"""ArabSeed scraper module."""
+

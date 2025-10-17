@@ -1,0 +1,148 @@
+services:
+  # Redis for Celery
+  redis:
+    image: redis:7-alpine
+    container_name: arabseed_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: arabseed_backend
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./data/arabseed.db
+      - REDIS_URL=redis://redis:6379/0
+      - JDOWNLOADER_HOST=${JDOWNLOADER_HOST:-host.docker.internal}
+      - JDOWNLOADER_PORT=${JDOWNLOADER_PORT:-3129}
+      # My.JDownloader credentials (expected by app.config.Settings -> myjd_*)
+      - MYJD_EMAIL=${MYJD_EMAIL}
+      - MYJD_PASSWORD=${MYJD_PASSWORD}
+      - MYJD_DEVICE_NAME=${MYJD_DEVICE_NAME}
+      - DOWNLOAD_FOLDER=/downloads
+      - ENGLISH_SERIES_DIR=/media/english-series
+      - ARABIC_SERIES_DIR=/media/arabic-series
+      - ENGLISH_MOVIES_DIR=/media/english-movies
+      - ARABIC_MOVIES_DIR=/media/arabic-movies
+      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://localhost:3001","http://localhost"]}
+    volumes:
+      - ./data:/app/data
+      - ${DOWNLOAD_FOLDER:-/DATA/AppData/arabseed_downloader/downloads}:/downloads
+      - ${ENGLISH_SERIES_DIR:-/DATA/Media/English-Series}:/media/english-series
+      - ${ARABIC_SERIES_DIR:-/DATA/Media/Arabic-Series}:/media/arabic-series
+      - ${ENGLISH_MOVIES_DIR:-/DATA/Media/English-Movies}:/media/english-movies
+      - ${ARABIC_MOVIES_DIR:-/DATA/Media/Arabic-Movies}:/media/arabic-movies
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Celery Worker
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: arabseed_celery_worker
+    restart: unless-stopped
+    command: celery -A app.celery_app worker --loglevel=info
+    environment:
+      - DATABASE_URL=sqlite:///./data/arabseed.db
+      - REDIS_URL=redis://redis:6379/0
+      - JDOWNLOADER_HOST=${JDOWNLOADER_HOST:-host.docker.internal}
+      - JDOWNLOADER_PORT=${JDOWNLOADER_PORT:-3129}
+      - MYJD_EMAIL=${MYJD_EMAIL}
+      - MYJD_PASSWORD=${MYJD_PASSWORD}
+      - MYJD_DEVICE_NAME=${MYJD_DEVICE_NAME}
+      - DOWNLOAD_FOLDER=/downloads
+      - ENGLISH_SERIES_DIR=/media/english-series
+      - ARABIC_SERIES_DIR=/media/arabic-series
+      - ENGLISH_MOVIES_DIR=/media/english-movies
+      - ARABIC_MOVIES_DIR=/media/arabic-movies
+      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
+    volumes:
+      - ./data:/app/data
+      - ${DOWNLOAD_FOLDER:-/DATA/AppData/arabseed_downloader/downloads}:/downloads
+      - ${ENGLISH_SERIES_DIR:-/DATA/Media/English-Series}:/media/english-series
+      - ${ARABIC_SERIES_DIR:-/DATA/Media/Arabic-Series}:/media/arabic-series
+      - ${ENGLISH_MOVIES_DIR:-/DATA/Media/English-Movies}:/media/english-movies
+      - ${ARABIC_MOVIES_DIR:-/DATA/Media/Arabic-Movies}:/media/arabic-movies
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Celery Beat (Scheduler)
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: arabseed_celery_beat
+    restart: unless-stopped
+    command: celery -A app.celery_app beat --loglevel=info
+    environment:
+      - DATABASE_URL=sqlite:///./data/arabseed.db
+      - REDIS_URL=redis://redis:6379/0
+      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-1}
+      - DOWNLOAD_SYNC_INTERVAL_MINUTES=${DOWNLOAD_SYNC_INTERVAL_MINUTES:-5}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8001
+    container_name: arabseed_frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8001
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: arabseed_network
